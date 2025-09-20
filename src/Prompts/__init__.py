@@ -1,0 +1,1 @@
+from .default import system_prompt
