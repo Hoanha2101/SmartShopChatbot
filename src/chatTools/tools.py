@@ -2,31 +2,41 @@ from langchain.tools import tool
 from ..utils import run_query
 
 # ---------------- SAFE TOOLS ----------------
-@tool
-def get_customer_info(customer_id: int):
-    """Tra cứu thông tin khách hàng"""
-    q = "SELECT * FROM customers WHERE CustomerId=?"
-    return run_query(q, (customer_id,), fetch=True)
 
-@tool
-def get_order_info(order_id: int):
-    """Tra cứu thông tin đơn hàng (bao gồm chi tiết sản phẩm)"""
-    q = """SELECT o.OrderId, o.OrderDate, o.Status, p.ProductName, od.Quantity, od.UnitPrice
-           FROM orders o
-           JOIN orders_details od ON o.OrderId = od.OrderId
-           JOIN products p ON p.ProductId = od.ProductId
-           WHERE o.OrderId=?"""
-    return run_query(q, (order_id,), fetch=True)
 
+# ----------- CATEGORY COUNT TOOL -----------
 @tool
-def list_products(category: str = None):
-    """Liệt kê sản phẩm theo danh mục hoặc tất cả"""
-    if category:
-        q = "SELECT * FROM products WHERE Category=?"
-        return run_query(q, (category,), fetch=True)
-    else:
-        q = "SELECT * FROM products"
-        return run_query(q, fetch=True)
+def check_categories():
+    """
+    Đếm số lượng danh mục sản phẩm hiện có trong hệ thống.
+    Trả về số lượng và danh sách tên danh mục.
+    """
+    q = "SELECT COUNT(*) as TotalCategories FROM categories"
+    total = run_query(q)
+
+    q2 = "SELECT CategoryName FROM categories"
+    names = run_query(q2, fetch=True)
+
+    return {"total": total[0][0], "categories": [n[0] for n in names]}
+
+# ---------------- LIST PRODUCTS BY CATEGORY NAME TOOL ----------------
+@tool
+def list_products_by_category_name(category_name: str):
+    """
+    Liệt kê sản phẩm theo tên danh mục (category_name).
+    Ví dụ: list_products_by_category_name("Laptop")
+    Trả về danh sách sản phẩm gồm tên, giá, mô tả ngắn.
+    """
+    q = """
+        SELECT p.ProductName, p.Price, 
+               COALESCE(p.Description, 'Không có mô tả') AS ShortDesc
+        FROM products p
+        JOIN categories c ON p.CategoryId = c.CategoryId
+        WHERE LOWER(c.CategoryName) = LOWER(?)
+        ORDER BY p.ProductName
+    """
+    return run_query(q, (category_name,), fetch=True)
+
 
 # ---------------- SENSITIVE TOOLS ----------------
 @tool
@@ -47,5 +57,5 @@ def update_order_status(order_id: int, status: str):
     q = "UPDATE orders SET Status=? WHERE OrderId=?"
     return run_query(q, (status, order_id))
 
-safe_tools = [get_customer_info, get_order_info, list_products]
+safe_tools = [check_categories, list_products_by_category_name]
 sensitive_tools = [create_customer, add_product, update_order_status]
