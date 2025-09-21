@@ -1,4 +1,4 @@
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import ToolNode
@@ -32,6 +32,8 @@ class ChatController:
         self.system_prompt = system_prompt
         
         self.app = self.build_graph()
+        
+        self.state = {"messages": [SystemMessage(content=system_prompt)]}
 
     def llm_node(self, state: State):
         messages = state["messages"]
@@ -92,3 +94,19 @@ class ChatController:
         with open(path_plot, "wb") as f:
             f.write(graph_image)
         print(f"✅ Workflow đã được lưu tại {path_plot}")
+        
+    def run(self, user_input: str):
+        
+        # Thêm user message vào state
+        self.state["messages"].append(HumanMessage(content=user_input))
+        
+        # Chạy workflow
+        result = self.app.invoke(self.state, {"recursion_limit": 10})  # Giới hạn recursion
+        last_message = result["messages"][-1]
+        
+        if isinstance(last_message, AIMessage):
+            bot_response = last_message.content
+            self.state = result
+            return bot_response
+        else:
+            return "Xin lỗi, tôi không thể xử lý yêu cầu này."

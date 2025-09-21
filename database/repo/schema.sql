@@ -72,3 +72,52 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     CreatedAt TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (CustomerId) REFERENCES customers (CustomerId)
 );
+
+-- =========================
+-- INSERT SAMPLE DATA
+-- =========================
+
+-- Customers
+INSERT INTO customers (Name, Email, Phone, Address) VALUES
+('Nguyễn Văn A', 'vana@example.com', '0905123456', '123 Lê Lợi, Hà Nội'),
+('Trần Thị B', 'thib@example.com', '0912345678', '456 Trần Hưng Đạo, TP.HCM'),
+('Lê Hoàng C', 'hoangc@example.com', '0987654321', '789 Nguyễn Huệ, Đà Nẵng');
+
+-- Categories
+INSERT INTO categories (CategoryName, Description) VALUES
+('Điện thoại', 'Các sản phẩm smartphone, điện thoại di động'),
+('Laptop', 'Máy tính xách tay, laptop'),
+('Phụ kiện', 'Phụ kiện điện thoại, laptop');
+
+-- Products
+INSERT INTO products (ProductName, CategoryId, Description, Price, Quantity, ImageUrl) VALUES
+('iPhone 15 Pro Max', 1, 'Điện thoại Apple mới nhất', 32990000, 10, 'https://example.com/iphone15.jpg'),
+('Samsung Galaxy S23 Ultra', 1, 'Flagship Samsung', 28990000, 8, 'https://example.com/s23ultra.jpg'),
+('MacBook Air M2', 2, 'Laptop Apple chip M2', 28990000, 5, 'https://example.com/macbookairm2.jpg'),
+('Dell XPS 13', 2, 'Laptop cao cấp của Dell', 25990000, 7, 'https://example.com/dellxps13.jpg'),
+('Tai nghe AirPods Pro 2', 3, 'Tai nghe không dây chống ồn', 5490000, 20, 'https://example.com/airpodspro2.jpg');
+
+-- Orders
+INSERT INTO orders (CustomerId, Status, TotalAmount) VALUES
+(1, 'Pending', 32990000),
+(2, 'Processing', 34480000),
+(3, 'Completed', 5490000);
+
+-- Order details
+INSERT INTO order_details (OrderId, ProductId, Quantity, UnitPrice) VALUES
+(1, 1, 1, 32990000),
+(2, 2, 1, 28990000),
+(2, 5, 1, 5490000),
+(3, 5, 1, 5490000);
+
+-- Promotions
+INSERT INTO promotions (ProductId, DiscountPercent, StartDate, EndDate) VALUES
+(1, 10, '2025-09-01', '2025-09-30'),
+(3, 15, '2025-09-15', '2025-10-15'),
+(5, 20, '2025-09-10', '2025-09-25');
+
+-- Support tickets
+INSERT INTO support_tickets (CustomerId, Subject, Message, Status) VALUES
+(1, 'Lỗi khi đặt hàng', 'Tôi không thanh toán được bằng thẻ VISA.', 'Open'),
+(2, 'Hỏi về bảo hành', 'Laptop Dell XPS 13 bảo hành mấy năm?', 'In Progress'),
+(3, 'Giao hàng chậm', 'AirPods Pro 2 tôi đặt chưa thấy giao.', 'Closed');
