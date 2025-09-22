@@ -5,6 +5,8 @@ from src.chatTools import safe_tools, sensitive_tools
 
 SaleChatbot = ChatController(llm, safe_tools, sensitive_tools, system_prompt)
 
+# SaleChatbot.get_figure()
+
 while True:
     user_input = input("[👤 Bạn]: ").strip()
     if user_input.lower() in {"exit", "quit"}:

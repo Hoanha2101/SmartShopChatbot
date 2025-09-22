@@ -50,6 +50,7 @@ class ChatController:
         # Nếu không có tool calls, kết thúc
         if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
             return "end"
+        print(f"Tool list: {last_message.tool_calls}")
         # Lấy tool call đầu tiên
         first_tool_call = last_message.tool_calls[0]
         tool_name = first_tool_call["name"]
@@ -57,11 +58,34 @@ class ChatController:
         print(f"Tool được gọi: {tool_name}")
         
         if tool_name in self.sensitive_tool_names:
-            return "sensitive"
+            return "sensitive_confirm"
         elif tool_name in self.safe_tool_names:
             return "safe"
         else:
             return "end"
+    
+    def note_sensitive_confirm(self, state: State):
+        last_message = state["messages"][-1]
+        first_tool_call = last_message.tool_calls[0]
+        tool_name = first_tool_call["name"]
+        tool_args = first_tool_call["args"]
+        print(f"⚠️ Tool nhạy cảm được gọi: {tool_name} với args {tool_args}")
+        
+        confirm = input(f"Bạn có chắc chắn muốn sử dụng tool nhạy cảm '{tool_name}' không? (y/n): ").strip().lower()
+        
+        if confirm == "y":
+            # Thực thi tool nhạy cảm
+            for tool in self.sensitive_tools:
+                if tool.name == tool_name:
+                    try:
+                        tool_result = tool.invoke(tool_args)
+                        return {"messages": [ToolMessage(content=str(tool_result), tool_call_id=first_tool_call["id"])]}
+                    except Exception as e:
+                        return {"messages": [ToolMessage(content=f"Lỗi khi chạy tool {tool_name}: {e}", tool_call_id=first_tool_call["id"])]}
+        else:
+            print("❌ Người dùng đã từ chối chạy tool nhạy cảm.")
+            # Gửi phản hồi từ chối về cho LLM để xử lý tiếp
+            return {"messages": [AIMessage(content=f"Người dùng đã từ chối sử dụng tool nhạy cảm '{tool_name}'.")]}      
         
     def build_graph(self):
         workflow = StateGraph(State)
@@ -69,7 +93,7 @@ class ChatController:
         # Add nodes
         workflow.add_node("llm", self.llm_node)
         workflow.add_node("safe_tools", self.safe_tools_node)
-        workflow.add_node("sensitive_tools", self.sensitive_tools_node)
+        workflow.add_node("sensitive_confirm", self.note_sensitive_confirm)
         
         # Add edges
         workflow.add_edge("__start__", "llm")
@@ -78,15 +102,14 @@ class ChatController:
             self.route_from_llm,
             {
                 "safe": "safe_tools",
-                "sensitive": "sensitive_tools", 
+                "sensitive_confirm": "sensitive_confirm", 
                 "end": "__end__"
             }
         )
-        
         workflow.add_edge("safe_tools", "llm")
-        workflow.add_edge("sensitive_tools", "llm")
+        workflow.add_edge("sensitive_confirm", "llm")
         
-        return workflow.compile(interrupt_before=["sensitive_tools"])
+        return workflow.compile()
     
     def get_figure(self, path_plot = os.path.join(PROJECT_DIR, "illustration", "workflow.png")):
         graph = self.build_graph().get_graph()
