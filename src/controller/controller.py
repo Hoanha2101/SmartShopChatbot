@@ -111,13 +111,13 @@ class ChatController:
         
         return workflow.compile()
     
-    def get_figure(self, path_plot = os.path.join(PROJECT_DIR, "illustration", "workflow.png")):
+    def get_figure(self, path_plot=os.path.join(PROJECT_DIR, "illustration", "workflow.mmd")):
         graph = self.build_graph().get_graph()
-        graph_image = graph.draw_mermaid_png() 
-        with open(path_plot, "wb") as f:
-            f.write(graph_image)
-        print(f"✅ Workflow đã được lưu tại {path_plot}")
-        
+        mermaid_syntax = graph.draw_mermaid()
+        with open(path_plot, "w", encoding="utf-8") as f:
+            f.write(mermaid_syntax)
+        print(f"✅ Mermaid source đã được lưu tại {path_plot} (mở bằng VSCode hoặc mermaid viewer)")
+
     def run(self, user_input: str):
         
         # Thêm user message vào state

@@ -1,0 +1,20 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	llm(llm)
+	safe_tools(safe_tools)
+	sensitive_confirm(sensitive_confirm)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> llm;
+	llm -. &nbsp;end&nbsp; .-> __end__;
+	llm -. &nbsp;safe&nbsp; .-> safe_tools;
+	llm -.-> sensitive_confirm;
+	safe_tools --> llm;
+	sensitive_confirm --> llm;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
