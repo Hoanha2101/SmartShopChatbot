@@ -874,15 +874,18 @@ def update_customer_info(customer_id: int, field: str, value: str):
 
 # --------------------------------------------------------------------
 
-safe_tools = [smart_search,
-              check_categories, list_products_by_category,
-              get_all_products, get_product_by_name, 
-              get_discounted_products,
-              compare_products]
+safe_tools = [smart_search, #  Tìm kiếm thông tin chung trên web. Sử dụng Tavily để tìm kiếm và trả về kết quả.
+              check_categories, #Lấy danh sách tất cả danh mục sản phẩm trong cửa hàng. Trả về tổng số lượng và danh sách gồm CategoryId, CategoryName, Description.
+              list_products_by_category, # Liệt kê các sản phẩm thuộc một danh mục theo tên (category_name).
+              get_all_products, # Lấy tất cả sản phẩm
+              get_product_by_name, # lấy sản phẩm theo tên sản phẩm
+              get_discounted_products, # Lây tất cả thông tin giảm giá
+              compare_products # So sáng 2 sản phẩm, cái này có search thêm với Tavily nếu thiếu thông tin
+              ]
 
-sensitive_tools = [add_order,
-                   view_cart, 
-                   register_customer,
-                   get_customer_info, 
-                   update_customer_info
+sensitive_tools = [add_order, # thêm đặt hàng mới
+                   view_cart, # xem giỏ hàng
+                   register_customer, # đăng kí khách hàng mới
+                   get_customer_info, # Xem thông tin của khách hàng
+                   update_customer_info # update thông tin khách hàng
                    ]
