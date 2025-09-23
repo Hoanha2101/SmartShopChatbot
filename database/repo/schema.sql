@@ -167,6 +167,185 @@ BEGIN
     WHERE OrderId = OLD.OrderId;
 END;
 
+-- ===== BỔ SUNG QUẢN LÝ LỊCH SỬ TRÒ CHUYỆN VÀ SESSION =====
+-- Thêm vào database hiện tại mà không thay đổi cấu trúc cũ
+
+-- Bảng quản lý session trò chuyện
+CREATE TABLE chat_sessions (
+    SessionId INTEGER PRIMARY KEY AUTOINCREMENT,
+    CustomerId INTEGER NOT NULL,
+    SessionName TEXT DEFAULT 'New Chat',
+    IsActive BOOLEAN DEFAULT TRUE,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    LastMessageAt DATETIME,
+    MessageCount INTEGER DEFAULT 0,
+    FOREIGN KEY (CustomerId) REFERENCES customers(CustomerId) ON DELETE CASCADE
+);
+
+-- Bảng lưu trữ tin nhắn
+CREATE TABLE chat_messages (
+    MessageId INTEGER PRIMARY KEY AUTOINCREMENT,
+    SessionId INTEGER NOT NULL,
+    MessageType TEXT NOT NULL CHECK(MessageType IN ('human', 'ai', 'system', 'tool', 'summary')),
+    Content TEXT NOT NULL,
+    ToolCalls TEXT, -- JSON string để lưu thông tin tool calls
+    ToolCallId TEXT,
+    IsVisible BOOLEAN DEFAULT TRUE, -- Có hiển thị trong lịch sử không
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE
+);
+
+-- Bảng tóm tắt conversation (để tối ưu memory)
+CREATE TABLE conversation_summaries (
+    SummaryId INTEGER PRIMARY KEY AUTOINCREMENT,
+    SessionId INTEGER NOT NULL,
+    SummaryContent TEXT NOT NULL,
+    MessageRangeStart INTEGER NOT NULL, -- MessageId đầu tiên được tóm tắt
+    MessageRangeEnd INTEGER NOT NULL,   -- MessageId cuối cùng được tóm tắt
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE,
+    FOREIGN KEY (MessageRangeStart) REFERENCES chat_messages(MessageId),
+    FOREIGN KEY (MessageRangeEnd) REFERENCES chat_messages(MessageId)
+);
+
+-- Bảng cấu hình session (tùy chọn nâng cao)
+CREATE TABLE session_configs (
+    ConfigId INTEGER PRIMARY KEY AUTOINCREMENT,
+    SessionId INTEGER NOT NULL,
+    SystemPrompt TEXT,
+    MaxMemoryLength INTEGER DEFAULT 20,
+    AutoSummarize BOOLEAN DEFAULT TRUE,
+    Language TEXT DEFAULT 'vi',
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE
+);
+
+-- Index để tối ưu performance
+CREATE INDEX idx_chat_sessions_customer ON chat_sessions(CustomerId);
+CREATE INDEX idx_chat_sessions_active ON chat_sessions(IsActive, UpdatedAt DESC);
+CREATE INDEX idx_chat_messages_session ON chat_messages(SessionId, CreatedAt);
+CREATE INDEX idx_chat_messages_type ON chat_messages(MessageType);
+CREATE INDEX idx_conversation_summaries_session ON conversation_summaries(SessionId);
+
+-- ===== TRIGGERS ĐỂ TỰ ĐỘNG CẬP NHẬT =====
+
+-- Trigger cập nhật thông tin session khi có tin nhắn mới
+CREATE TRIGGER update_session_on_new_message
+    AFTER INSERT ON chat_messages
+    FOR EACH ROW
+    WHEN NEW.MessageType IN ('human', 'ai')  -- Chỉ đếm tin nhắn chính
+BEGIN
+    UPDATE chat_sessions 
+    SET 
+        LastMessageAt = NEW.CreatedAt,
+        MessageCount = MessageCount + 1,
+        UpdatedAt = CURRENT_TIMESTAMP
+    WHERE SessionId = NEW.SessionId;
+END;
+
+-- Trigger cập nhật UpdatedAt cho session configs
+CREATE TRIGGER update_session_configs_timestamp 
+    AFTER UPDATE ON session_configs
+    FOR EACH ROW
+BEGIN
+    UPDATE session_configs SET UpdatedAt = CURRENT_TIMESTAMP WHERE ConfigId = NEW.ConfigId;
+END;
+
+-- Trigger cập nhật UpdatedAt cho chat_sessions
+CREATE TRIGGER update_chat_sessions_timestamp 
+    AFTER UPDATE ON chat_sessions
+    FOR EACH ROW
+BEGIN
+    UPDATE chat_sessions SET UpdatedAt = CURRENT_TIMESTAMP WHERE SessionId = NEW.SessionId;
+END;
+
+-- ===== VIEW ĐỂ TRUY VẤN DỄ DÀNG =====
+
+-- View để xem session với thông tin khách hàng
+CREATE VIEW session_overview AS
+SELECT 
+    cs.SessionId,
+    cs.SessionName,
+    cs.IsActive,
+    cs.CreatedAt,
+    cs.UpdatedAt,
+    cs.LastMessageAt,
+    cs.MessageCount,
+    c.Name as CustomerName,
+    c.Email as CustomerEmail
+FROM chat_sessions cs
+JOIN customers c ON cs.CustomerId = c.CustomerId;
+
+-- View để xem tin nhắn với thông tin session
+CREATE VIEW message_details AS
+SELECT 
+    cm.MessageId,
+    cm.SessionId,
+    cm.MessageType,
+    cm.Content,
+    cm.CreatedAt,
+    cs.SessionName,
+    c.Name as CustomerName
+FROM chat_messages cm
+JOIN chat_sessions cs ON cm.SessionId = cs.SessionId
+JOIN customers c ON cs.CustomerId = c.CustomerId
+WHERE cm.IsVisible = TRUE
+ORDER BY cm.CreatedAt;
+
+-- ===== STORED PROCEDURES (Sử dụng trong Python) =====
+
+-- Function để tạo session mới (thực hiện trong Python)
+-- def create_new_session(customer_id, session_name=None):
+--     if not session_name:
+--         session_name = f"Chat {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+--     # INSERT INTO chat_sessions...
+
+-- Function để lấy lịch sử chat (thực hiện trong Python)  
+-- def get_chat_history(session_id, limit=50):
+--     # SELECT từ chat_messages với limit
+
+-- Function để tóm tắt và cleanup old messages (thực hiện trong Python)
+-- def summarize_old_messages(session_id, keep_recent=10):
+--     # Logic tóm tắt tin nhắn cũ
+
+-- ===== DỮ LIỆU MẪU =====
+
+-- Tạo một số session mẫu (giả sử đã có customers)
+INSERT INTO chat_sessions (CustomerId, SessionName, IsActive, CreatedAt) VALUES 
+(1, 'Hỏi về sản phẩm', TRUE, '2024-01-15 10:00:00'),
+(1, 'Hỗ trợ đặt hàng', FALSE, '2024-01-16 14:30:00'),
+(2, 'Khiếu nại sản phẩm', TRUE, '2024-01-17 09:15:00');
+
+-- Tạo cấu hình session mặc định
+INSERT INTO session_configs (SessionId, SystemPrompt, MaxMemoryLength, AutoSummarize) VALUES 
+(1, 'Bạn là trợ lý AI hỗ trợ khách hàng về sản phẩm.', 20, TRUE),
+(2, 'Bạn là trợ lý AI hỗ trợ đặt hàng.', 15, TRUE),
+(3, 'Bạn là trợ lý AI xử lý khiếu nại.', 25, TRUE);
+
+-- Tạo một số tin nhắn mẫu
+INSERT INTO chat_messages (SessionId, MessageType, Content, CreatedAt) VALUES 
+(1, 'human', 'Xin chào, tôi muốn hỏi về sản phẩm laptop', '2024-01-15 10:01:00'),
+(1, 'ai', 'Xin chào! Tôi có thể giúp bạn tìm hiểu về các sản phẩm laptop. Bạn đang quan tâm đến loại laptop nào?', '2024-01-15 10:01:30'),
+(1, 'human', 'Tôi cần laptop cho công việc văn phòng', '2024-01-15 10:02:00'),
+(1, 'ai', 'Để laptop phù hợp cho công việc văn phòng, tôi khuyên bạn nên xem các dòng laptop có cấu hình ổn định...', '2024-01-15 10:02:30');
+
+-- ===== QUERY MẪU ĐỂ SỬ DỤNG =====
+
+-- Lấy tất cả session của một khách hàng
+-- SELECT * FROM session_overview WHERE CustomerEmail = 'customer@email.com' ORDER BY UpdatedAt DESC;
+
+-- Lấy lịch sử chat của một session
+-- SELECT MessageType, Content, CreatedAt FROM chat_messages 
+-- WHERE SessionId = 1 AND IsVisible = TRUE ORDER BY CreatedAt;
+
+-- Lấy session đang hoạt động gần nhất của khách hàng  
+-- SELECT * FROM chat_sessions WHERE CustomerId = 1 AND IsActive = TRUE ORDER BY UpdatedAt DESC LIMIT 1;
+
+-- Tìm kiếm trong lịch sử chat
+-- SELECT * FROM message_details WHERE Content LIKE '%laptop%' ORDER BY CreatedAt DESC;
+
 -- =========================
 -- INSERT SAMPLE DATA
 -- =========================

@@ -17,7 +17,7 @@ class State(TypedDict):
     messages: Annotated[list, operator.add]
 
 class ChatController:
-    def __init__(self, llm, safe_tools, sensitive_tools, system_prompt, len_summary = 8):
+    def __init__(self, llm, safe_tools, sensitive_tools, system_prompt, len_summary = 20):
         self.len_summary = len_summary
         self.llm = llm
     
@@ -217,10 +217,6 @@ class ChatController:
             summary_message = SystemMessage(
                 content=f"[Tóm tắt cuộc hội thoại trước đó]: {summary_content}"
             )
-            
-            print("--------summary_message----------\n")
-            print(summary_message)
-            print("----------------------\n")
             
             # Cập nhật state với: system_prompt + summary + messages gần nhất
             new_messages = [system_msg, summary_message] + messages_to_keep_list
