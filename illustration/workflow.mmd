@@ -8,11 +8,14 @@ graph TD;
 	llm(llm)
 	safe_tools(safe_tools)
 	sensitive_confirm(sensitive_confirm)
+	rag(rag)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> llm;
 	llm -. &nbsp;end&nbsp; .-> __end__;
+	llm -.-> rag;
 	llm -. &nbsp;safe&nbsp; .-> safe_tools;
 	llm -.-> sensitive_confirm;
+	rag --> llm;
 	safe_tools --> llm;
 	sensitive_confirm --> llm;
 	classDef default fill:#f2f0ff,line-height:1.2

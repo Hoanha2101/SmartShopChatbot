@@ -183,26 +183,35 @@ CREATE TABLE chat_sessions (
     FOREIGN KEY (CustomerId) REFERENCES customers(CustomerId) ON DELETE CASCADE
 );
 
--- Bảng lưu trữ tin nhắn
+-- Bảng lưu trữ tin nhắn với vector embeddings
 CREATE TABLE chat_messages (
     MessageId INTEGER PRIMARY KEY AUTOINCREMENT,
     SessionId INTEGER NOT NULL,
     MessageType TEXT NOT NULL CHECK(MessageType IN ('human', 'ai', 'system', 'tool', 'summary')),
     Content TEXT NOT NULL,
+    ContentEmbedding BLOB, -- Vector embedding của nội dung tin nhắn
+    EmbeddingModel TEXT, -- Model embedding được sử dụng
     ToolCalls TEXT, -- JSON string để lưu thông tin tool calls
     ToolCallId TEXT,
     IsVisible BOOLEAN DEFAULT TRUE, -- Có hiển thị trong lịch sử không
+    IsSummarized BOOLEAN DEFAULT FALSE, -- Đã được tóm tắt chưa
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE
 );
 
--- Bảng tóm tắt conversation (để tối ưu memory)
+-- Bảng tóm tắt conversation với vector embeddings
 CREATE TABLE conversation_summaries (
     SummaryId INTEGER PRIMARY KEY AUTOINCREMENT,
     SessionId INTEGER NOT NULL,
     SummaryContent TEXT NOT NULL,
+    SummaryEmbedding BLOB, -- Vector embedding của summary (binary format)
+    EmbeddingModel TEXT DEFAULT 'text-embedding-ada-002', -- Model được sử dụng
+    EmbeddingDimension INTEGER DEFAULT 1536, -- Số chiều của vector
     MessageRangeStart INTEGER NOT NULL, -- MessageId đầu tiên được tóm tắt
     MessageRangeEnd INTEGER NOT NULL,   -- MessageId cuối cùng được tóm tắt
+    MessageCount INTEGER NOT NULL DEFAULT 0, -- Số lượng messages được tóm tắt
+    KeyTopics TEXT, -- JSON array các chủ đề chính
+    SentimentScore REAL, -- Điểm cảm xúc của cuộc hội thoại (-1 to 1)
     CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE,
     FOREIGN KEY (MessageRangeStart) REFERENCES chat_messages(MessageId),
@@ -222,12 +231,70 @@ CREATE TABLE session_configs (
     FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE
 );
 
--- Index để tối ưu performance
-CREATE INDEX idx_chat_sessions_customer ON chat_sessions(CustomerId);
-CREATE INDEX idx_chat_sessions_active ON chat_sessions(IsActive, UpdatedAt DESC);
-CREATE INDEX idx_chat_messages_session ON chat_messages(SessionId, CreatedAt);
-CREATE INDEX idx_chat_messages_type ON chat_messages(MessageType);
-CREATE INDEX idx_conversation_summaries_session ON conversation_summaries(SessionId);
+-- ===== BẢNG HỖ TRỢ VECTOR EMBEDDINGS =====
+
+-- Bảng lưu trữ semantic clusters của conversations
+CREATE TABLE conversation_clusters (
+    ClusterId INTEGER PRIMARY KEY AUTOINCREMENT,
+    ClusterName TEXT NOT NULL,
+    ClusterEmbedding BLOB NOT NULL, -- Vector trung tâm của cluster
+    EmbeddingModel TEXT NOT NULL,
+    Description TEXT,
+    SessionCount INTEGER DEFAULT 0,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bảng mapping sessions vào clusters
+CREATE TABLE session_clusters (
+    SessionId INTEGER NOT NULL,
+    ClusterId INTEGER NOT NULL,
+    SimilarityScore REAL NOT NULL, -- Độ tương tự (0-1)
+    AssignedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (SessionId, ClusterId),
+    FOREIGN KEY (SessionId) REFERENCES chat_sessions(SessionId) ON DELETE CASCADE,
+    FOREIGN KEY (ClusterId) REFERENCES conversation_clusters(ClusterId) ON DELETE CASCADE
+);
+
+-- Bảng lưu trữ knowledge base từ conversations
+CREATE TABLE knowledge_base (
+    KnowledgeId INTEGER PRIMARY KEY AUTOINCREMENT,
+    Title TEXT NOT NULL,
+    Content TEXT NOT NULL,
+    ContentEmbedding BLOB NOT NULL,
+    EmbeddingModel TEXT NOT NULL,
+    SourceType TEXT CHECK(SourceType IN ('conversation', 'manual', 'document')) DEFAULT 'conversation',
+    SourceSessionId INTEGER, -- Nếu từ conversation
+    Category TEXT,
+    Tags TEXT, -- JSON array
+    UseCount INTEGER DEFAULT 0, -- Số lần được sử dụng
+    LastUsedAt DATETIME,
+    IsActive BOOLEAN DEFAULT TRUE,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (SourceSessionId) REFERENCES chat_sessions(SessionId) ON DELETE SET NULL
+);
+
+-- Bảng lưu semantic search cache
+CREATE TABLE semantic_search_cache (
+    CacheId INTEGER PRIMARY KEY AUTOINCREMENT,
+    QueryText TEXT NOT NULL,
+    QueryEmbedding BLOB NOT NULL,
+    EmbeddingModel TEXT NOT NULL,
+    SearchResults TEXT NOT NULL, -- JSON array kết quả
+    HitCount INTEGER DEFAULT 1,
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    LastUsedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ===== INDEX CHO VECTOR OPERATIONS =====
+CREATE INDEX idx_conversation_summaries_embedding_model ON conversation_summaries(EmbeddingModel);
+CREATE INDEX idx_chat_messages_embedding_model ON chat_messages(EmbeddingModel);
+CREATE INDEX idx_chat_messages_summarized ON chat_messages(IsSummarized, SessionId);
+CREATE INDEX idx_knowledge_base_category ON knowledge_base(Category, IsActive);
+CREATE INDEX idx_knowledge_base_embedding_model ON knowledge_base(EmbeddingModel);
+CREATE INDEX idx_semantic_search_cache_query ON semantic_search_cache(QueryText);
+CREATE INDEX idx_session_clusters_similarity ON session_clusters(SimilarityScore DESC);
 
 -- ===== TRIGGERS ĐỂ TỰ ĐỘNG CẬP NHẬT =====
 
@@ -243,6 +310,49 @@ BEGIN
         MessageCount = MessageCount + 1,
         UpdatedAt = CURRENT_TIMESTAMP
     WHERE SessionId = NEW.SessionId;
+END;
+
+-- Trigger cập nhật cluster count
+CREATE TRIGGER update_cluster_session_count_insert
+    AFTER INSERT ON session_clusters
+    FOR EACH ROW
+BEGIN
+    UPDATE conversation_clusters 
+    SET SessionCount = SessionCount + 1,
+        UpdatedAt = CURRENT_TIMESTAMP
+    WHERE ClusterId = NEW.ClusterId;
+END;
+
+CREATE TRIGGER update_cluster_session_count_delete
+    AFTER DELETE ON session_clusters
+    FOR EACH ROW
+BEGIN
+    UPDATE conversation_clusters 
+    SET SessionCount = SessionCount - 1,
+        UpdatedAt = CURRENT_TIMESTAMP
+    WHERE ClusterId = OLD.ClusterId;
+END;
+
+-- Trigger cập nhật knowledge base usage
+CREATE TRIGGER update_knowledge_usage
+    AFTER UPDATE OF UseCount ON knowledge_base
+    FOR EACH ROW
+    WHEN NEW.UseCount > OLD.UseCount
+BEGIN
+    UPDATE knowledge_base 
+    SET LastUsedAt = CURRENT_TIMESTAMP 
+    WHERE KnowledgeId = NEW.KnowledgeId;
+END;
+
+-- Trigger cập nhật cache hit count
+CREATE TRIGGER update_cache_hit_count
+    AFTER UPDATE OF HitCount ON semantic_search_cache
+    FOR EACH ROW
+    WHEN NEW.HitCount > OLD.HitCount
+BEGIN
+    UPDATE semantic_search_cache 
+    SET LastUsedAt = CURRENT_TIMESTAMP 
+    WHERE CacheId = NEW.CacheId;
 END;
 
 -- Trigger cập nhật UpdatedAt cho session configs
@@ -331,20 +441,46 @@ INSERT INTO chat_messages (SessionId, MessageType, Content, CreatedAt) VALUES
 (1, 'human', 'Tôi cần laptop cho công việc văn phòng', '2024-01-15 10:02:00'),
 (1, 'ai', 'Để laptop phù hợp cho công việc văn phòng, tôi khuyên bạn nên xem các dòng laptop có cấu hình ổn định...', '2024-01-15 10:02:30');
 
--- ===== QUERY MẪU ĐỂ SỬ DỤNG =====
+-- ===== QUERY MẪU ĐỂ SỬ DỤNG VỚI VECTOR EMBEDDINGS =====
 
 -- Lấy tất cả session của một khách hàng
 -- SELECT * FROM session_overview WHERE CustomerEmail = 'customer@email.com' ORDER BY UpdatedAt DESC;
 
--- Lấy lịch sử chat của một session
--- SELECT MessageType, Content, CreatedAt FROM chat_messages 
+-- Lấy lịch sử chat của một session với embeddings
+-- SELECT MessageType, Content, 
+--        CASE WHEN ContentEmbedding IS NOT NULL THEN 'Yes' ELSE 'No' END as HasEmbedding,
+--        CreatedAt 
+-- FROM chat_messages 
 -- WHERE SessionId = 1 AND IsVisible = TRUE ORDER BY CreatedAt;
 
 -- Lấy session đang hoạt động gần nhất của khách hàng  
 -- SELECT * FROM chat_sessions WHERE CustomerId = 1 AND IsActive = TRUE ORDER BY UpdatedAt DESC LIMIT 1;
 
--- Tìm kiếm trong lịch sử chat
--- SELECT * FROM message_details WHERE Content LIKE '%laptop%' ORDER BY CreatedAt DESC;
+-- Tìm kiếm semantic trong knowledge base (cần implement trong Python)
+-- SELECT KnowledgeId, Title, Content, UseCount
+-- FROM knowledge_base 
+-- WHERE IsActive = TRUE
+-- ORDER BY [cosine_similarity với query vector] DESC LIMIT 5;
+
+-- Lấy summaries có embedding của một session
+-- SELECT SummaryId, SummaryContent, KeyTopics, SentimentScore,
+--        CASE WHEN SummaryEmbedding IS NOT NULL THEN 'Yes' ELSE 'No' END as HasEmbedding
+-- FROM conversation_summaries 
+-- WHERE SessionId = 1 ORDER BY CreatedAt;
+
+-- Lấy clusters tương tự cho một session
+-- SELECT cc.ClusterName, cc.Description, sc.SimilarityScore
+-- FROM session_clusters sc
+-- JOIN conversation_clusters cc ON sc.ClusterId = cc.ClusterId
+-- WHERE sc.SessionId = 1
+-- ORDER BY sc.SimilarityScore DESC;
+
+-- Thống kê embedding coverage
+-- SELECT 
+--     (SELECT COUNT(*) FROM chat_messages WHERE ContentEmbedding IS NOT NULL) as MessagesWithEmbedding,
+--     (SELECT COUNT(*) FROM chat_messages) as TotalMessages,
+--     (SELECT COUNT(*) FROM conversation_summaries WHERE SummaryEmbedding IS NOT NULL) as SummariesWithEmbedding,
+--     (SELECT COUNT(*) FROM conversation_summaries) as TotalSummaries;
 
 -- =========================
 -- INSERT SAMPLE DATA

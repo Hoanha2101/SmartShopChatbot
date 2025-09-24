@@ -18,6 +18,10 @@ class State(TypedDict):
 
 class ChatController:
     def __init__(self, llm, safe_tools, sensitive_tools, system_prompt, len_summary = 20):
+        
+        from ..chatTools import RAG
+        self.RAG = RAG.get_instance()
+        
         self.len_summary = len_summary
         self.llm = llm
     
@@ -29,7 +33,12 @@ class ChatController:
         self.sensitive_tools_node = ToolNode(tools=self.sensitive_tools)
         self.sensitive_tool_names = {tool.name for tool in self.sensitive_tools}
         
-        self.all_tools = self.safe_tools + self.sensitive_tools
+        # Tạo RAG tool và node
+        self.rag_tool = self._create_rag_tool()
+        self.rag_tools_node = ToolNode(tools=[self.rag_tool])
+        
+        # Combine tất cả tools cho LLM
+        self.all_tools = self.safe_tools + self.sensitive_tools + [self.rag_tool]
         self.llm_with_tools = llm.bind_tools(self.all_tools)
         
         self.system_prompt = system_prompt
@@ -67,6 +76,30 @@ class ChatController:
         response = self.llm_with_tools.invoke(messages)
         return {"messages": [response]}
     
+    def _create_rag_tool(self):
+        """Tạo RAG tool"""
+        @tool
+        def rag_tool(query: str) -> str:
+            """Search for relevant documents in the knowledge base.
+            
+            Args:
+                query: The search query to find relevant information
+                
+            Returns:
+                str: Relevant information from the knowledge base
+            """
+            try:
+                # result = self.RAG.search(query)
+                result = self.RAG.search_with_neighbors(query)
+                if len(result) > 0:
+                    return ". ".join(result)
+                else:
+                    return "Database của hệ thống không có hỗ trợ thông tin này!!!"
+            except Exception as e:
+                return f"Lỗi khi tìm kiếm trong database: {str(e)}"
+        
+        return rag_tool
+        
     def route_from_llm(self, state: State):
         last_message = state["messages"][-1]
         # Nếu không có tool calls, kết thúc
@@ -79,7 +112,9 @@ class ChatController:
         
         print(f"Tool được gọi: {tool_name}")
         
-        if tool_name in self.sensitive_tool_names:
+        if tool_name == "rag_tool":  # Kiểm tra RAG tool
+            return "rag"
+        elif tool_name in self.sensitive_tool_names:
             return "sensitive_confirm"
         elif tool_name in self.safe_tool_names:
             return "safe"
@@ -116,6 +151,7 @@ class ChatController:
         workflow.add_node("llm", self.llm_node)
         workflow.add_node("safe_tools", self.safe_tools_node)
         workflow.add_node("sensitive_confirm", self.note_sensitive_confirm)
+        workflow.add_node("rag", self.rag_tools_node)
         
         # Add edges
         workflow.add_edge("__start__", "llm")
@@ -124,12 +160,14 @@ class ChatController:
             self.route_from_llm,
             {
                 "safe": "safe_tools",
-                "sensitive_confirm": "sensitive_confirm", 
+                "sensitive_confirm": "sensitive_confirm",
+                "rag": "rag", 
                 "end": "__end__"
             }
         )
         workflow.add_edge("safe_tools", "llm")
         workflow.add_edge("sensitive_confirm", "llm")
+        workflow.add_edge("rag", "llm")
         
         return workflow.compile()
     
@@ -269,7 +307,7 @@ class ChatController:
                 self.state = result
                 
                 # Lưu response vào full history
-                self.full_chat_history.extend([msg for msg in result["messages"][1:] if ((msg not in self.full_chat_history) and (not isinstance(msg, SystemMessage)))])
+                self.full_chat_history.extend([msg for msg in result["messages"][1:] if ((msg not in self.full_chat_history) and (isinstance(msg, HumanMessage) or isinstance(msg, AIMessage)))])
 
                 # Kiểm tra và thực hiện tóm tắt nếu cần
                 if self._should_summarize():
