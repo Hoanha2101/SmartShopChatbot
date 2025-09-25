@@ -1,0 +1,10 @@
+chromadb==1.1.0
+ipython==8.12.3
+langchain==0.3.27
+langchain_core==0.3.76
+langchain_google_genai==2.1.12
+langchain_openai==0.3.33
+langgraph==0.6.7
+python-dotenv==1.1.1
+sentence_transformers==4.1.0
+tavily_python==0.7.12

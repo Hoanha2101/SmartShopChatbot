@@ -2,7 +2,7 @@
 .venv
 
 # folders
-database/chroma_db/
+database/chroma_db/*
 
 # files
 zcheck.py
